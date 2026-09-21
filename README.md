@@ -37,3 +37,5 @@ Then open `http://127.0.0.1:8899`.
 ```bash
 vercel --prod
 ```
+
+_Auto-deploy verified via Git integration._

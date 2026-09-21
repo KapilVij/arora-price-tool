@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Arora Price Tool</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="Upload Excel price lists and look up part number prices instantly. Runs entirely in your browser — files are never uploaded anywhere." />
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #dde1e6;
+    --text: #1c1f24;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --good: #15803d;
+    --good-bg: #ecfdf3;
+    --bad-bg: #fef2f2;
+    --bad: #b91c1c;
+    --badge-bg: #eef2ff;
+    --badge-text: #3730a3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 20px 28px;
+    background: #111827;
+    color: #fff;
+  }
+  header h1 { margin: 0; font-size: 21px; }
+  header p { margin: 4px 0 0; color: #9ca3af; font-size: 13px; }
+  header .privacy { color: #86efac; font-size: 12px; margin-top: 6px; }
+  main {
+    max-width: 900px;
+    margin: 24px auto;
+    padding: 0 20px 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  select, input[type=text], textarea {
+    padding: 9px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-size: 14px;
+    background: #fff;
+    color: var(--text);
+    font-family: inherit;
+  }
+  select { min-width: 200px; }
+  textarea { width: 100%; min-height: 90px; resize: vertical; }
+  button {
+    padding: 9px 16px;
+    border-radius: 6px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-dark); }
+  button.secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  button.secondary:hover { background: #eef2ff; }
+  button.danger { background: transparent; color: var(--bad); border: 1px solid #fca5a5; padding: 5px 10px; font-size: 12px; }
+  button.danger:hover { background: var(--bad-bg); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .mapping-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  .preview-table { overflow-x: auto; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .hidden { display: none !important; }
+  .status { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  .file-list { display: flex; flex-direction: column; gap: 10px; }
+  .file-item {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .file-item-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .file-name { font-weight: 600; font-size: 14px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .badge.ok { background: var(--good-bg); color: var(--good); }
+  .badge.warn { background: #fffbeb; color: #92400e; }
+  .file-configure { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 22px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .dropzone.drag { border-color: var(--accent); background: #eef2ff; }
+
+  .result-block { margin-bottom: 18px; }
+  .result-query-title { font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+  .result-card {
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 8px;
+  }
+  .result-card.hit { background: var(--good-bg); border: 1px solid #bbf7d0; }
+  .result-card.miss { background: var(--bad-bg); border: 1px solid #fecaca; }
+  .result-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .brand-badge { background: var(--badge-bg); color: var(--badge-text); font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+  .price { font-size: 24px; font-weight: 700; color: var(--good); }
+  .part-title { font-weight: 600; }
+  .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px 14px; margin-top: 8px; font-size: 12px; }
+  .detail-grid .k { color: var(--muted); }
+  .link-btn {
+    background: none; border: none; color: var(--accent); padding: 0;
+    font-size: 13px; text-decoration: underline; cursor: pointer;
+  }
+  .copy-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: 1px solid var(--accent);
+    background: #fff;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .copy-btn:hover { background: var(--badge-bg); }
+  .copy-btn.copied { border-color: var(--good); color: var(--good); background: var(--good-bg); }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
+
+  @media (max-width: 640px) {
+    header { padding: 16px 18px; }
+    header h1 { font-size: 19px; }
+    header p { font-size: 12.5px; }
+    main { margin: 16px auto; padding: 0 12px 40px; gap: 12px; }
+    .card { padding: 14px 16px; }
+    .mapping-grid { grid-template-columns: 1fr; }
+    select, input[type=text] { width: 100%; min-width: 0; }
+    button { padding: 11px 16px; font-size: 15px; }
+    .copy-btn { padding: 6px 12px; font-size: 13px; }
+    button.danger { padding: 9px 14px; }
+    .row { gap: 8px; }
+    .file-item-head { gap: 8px; }
+    .file-item-head .configure-btn { margin-left: 0 !important; flex-basis: 100%; order: 3; }
+    .file-item-head .remove-btn { order: 4; }
+    .file-item-head .file-name { font-size: 15px; }
+    .file-item-head .badge { order: 2; }
+    .result-top { gap: 8px; }
+    .result-top .price { margin-left: 0 !important; order: 3; flex-basis: 100%; }
+    .result-top .copy-btn { order: 4; }
+    .detail-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+    .dropzone { padding: 18px 14px; font-size: 12.5px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Arora Price Tool</h1>
+  <p>Upload Excel price lists and search part numbers to find their price.</p>
+  <p class="privacy">🔒 Everything happens in your browser — your files are never uploaded to any server.</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>1. Price lists</h2>
+    <div id="dropzone" class="dropzone">
+      Click to choose Excel files (.xlsx, .xlsm, .xls), or drag &amp; drop them here — you can select several at once
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls" multiple class="hidden" />
+    <div class="status" id="uploadStatus"></div>
+    <div class="file-list" id="fileList" style="margin-top:14px"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Search part number(s)</h2>
+    <div class="field">
+      One part number per line (or separate with commas)
+      <textarea id="queryInput" placeholder="00050000068&#10;24121365&#10;52JL2034"></textarea>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="searchBtn">Search all files</button>
+      <button class="secondary hidden" id="copyAllBtn">Copy all results</button>
+      <button class="danger" id="clearBtn">Clear part numbers</button>
+      <span class="muted" id="searchStatus"></span>
+    </div>
+    <div id="resultsArea" style="margin-top:14px"></div>
+  </div>
+</main>
+
+<footer>Runs 100% in your browser. No data is ever sent anywhere.</footer>
+
+<script>
+// ---------------- State ----------------
+// files[filename] = { workbook, sheets: {name: rows[][]}, config: {brand, sheet, header_row, part_col, price_col, desc_col} }
+const files = {};
+
+const fileListEl = document.getElementById('fileList');
+const uploadStatus = document.getElementById('uploadStatus');
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const queryInput = document.getElementById('queryInput');
+const searchStatus = document.getElementById('searchStatus');
+const resultsArea = document.getElementById('resultsArea');
+const copyAllBtn = document.getElementById('copyAllBtn');
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---------------- Excel parsing helpers ----------------
+
+const PART_KEYWORDS = ["part num", "part no", "part number", "item code", "part", "code", "sku"];
+const PRICE_KEYWORDS = ["mrp", "rate", "price", "amount"];
+const DESC_KEYWORDS = ["item", "description", "desc", "name"];
+
+function cellStr(v) {
+  if (v === null || v === undefined || v === '') return '';
+  if (typeof v === 'number' && Number.isInteger(v)) return String(v);
+  return String(v).trim();
+}
+
+function scoreHeaderRow(row) {
+  const texts = row.map(c => cellStr(c).toLowerCase());
+  const nonEmpty = texts.filter(t => t);
+  if (nonEmpty.length < 2) return -1;
+  let score = nonEmpty.length;
+  texts.forEach(t => {
+    if (PART_KEYWORDS.some(k => t.includes(k))) score += 5;
+    if (PRICE_KEYWORDS.some(k => t.includes(k))) score += 5;
+    if (DESC_KEYWORDS.some(k => t.includes(k))) score += 2;
+  });
+  return score;
+}
+
+function guessHeaderRow(rows, maxScan = 20) {
+  let bestIdx = 0, bestScore = -1;
+  rows.slice(0, maxScan).forEach((row, i) => {
+    const s = scoreHeaderRow(row);
+    if (s > bestScore) { bestScore = s; bestIdx = i; }
+  });
+  return bestIdx;
+}
+
+function guessColumns(headerRow) {
+  const headers = headerRow.map(c => cellStr(c).toLowerCase());
+  function find(keywords, prefer) {
+    if (prefer) {
+      for (let i = 0; i < headers.length; i++) {
+        if (prefer.includes(headers[i])) return i;
+      }
+    }
+    for (let i = 0; i < headers.length; i++) {
+      if (keywords.some(k => headers[i].includes(k))) return i;
+    }
+    return null;
+  }
+  return {
+    part_col: find(PART_KEYWORDS, ["part num", "part no.", "part number", "item code"]),
+    price_col: find(PRICE_KEYWORDS, ["mrp", "mrp - per unit", "rate"]),
+    desc_col: find(DESC_KEYWORDS, ["item description", "item name", "item"]),
+  };
+}
+
+function guessBrand(filename) {
+  const stem = filename.replace(/\.[^.]+$/, '');
+  const tokens = stem.split(/[\s_-]+/).filter(t => t && !/^\d+$/.test(t) && !t.includes('.'));
+  const first = tokens[0] || stem.slice(0, 20);
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+}
+
+function parseWorkbookBuffer(buffer) {
+  const data = new Uint8Array(buffer);
+  const wb = XLSX.read(data, { type: 'array', cellDates: false });
+  const sheets = {};
+  wb.SheetNames.forEach(name => {
+    const ws = wb.Sheets[name];
+    sheets[name] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  });
+  return sheets;
+}
+
+function readWorkbook(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const buffer = e.target.result;
+        const sheets = parseWorkbookBuffer(buffer);
+        resolve({ sheets, buffer });
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// ---------------- Persistence (IndexedDB) ----------------
+// Stores each uploaded file's raw bytes + its saved column setup, so
+// re-opening this page later restores everything without re-uploading.
+
+const IDB_NAME = 'arora-price-tool';
+const IDB_STORE = 'files';
+
+function openStore() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) { reject(new Error('IndexedDB unavailable')); return; }
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(IDB_STORE)) {
+        req.result.createObjectStore(IDB_STORE, { keyPath: 'name' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbSaveFile(name, buffer, config) {
+  try {
+    const db = await openStore();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put({ name, buffer, config: config || null });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* storage unavailable (private browsing, quota, etc.) — degrade silently */ }
+}
+
+async function idbSaveConfig(name, config) {
+  try {
+    const db = await openStore();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const getReq = store.get(name);
+      getReq.onsuccess = () => {
+        const rec = getReq.result;
+        if (rec) { rec.config = config; store.put(rec); }
+      };
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function idbDeleteFile(name) {
+  try {
+    const db = await openStore();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(name);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function idbLoadAll() {
+  try {
+    const db = await openStore();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
+async function restoreSavedFiles() {
+  const records = await idbLoadAll();
+  let restored = 0;
+  for (const rec of records) {
+    try {
+      const sheets = parseWorkbookBuffer(rec.buffer);
+      files[rec.name] = { sheets, config: rec.config || null };
+      restored++;
+    } catch (err) { /* skip a corrupted/unreadable saved record */ }
+  }
+  if (restored) {
+    uploadStatus.textContent = `Restored ${restored} saved file(s) from your last visit.`;
+  }
+  renderFileList();
+}
+
+// ---------------- File list UI ----------------
+
+async function handleFiles(fileListObj) {
+  const list = Array.from(fileListObj);
+  if (!list.length) return;
+  uploadStatus.textContent = `Reading ${list.length} file(s)…`;
+  let ok = 0, failed = [];
+  for (const file of list) {
+    if (!/\.(xlsx|xlsm|xls)$/i.test(file.name)) { failed.push(file.name); continue; }
+    try {
+      const { sheets, buffer } = await readWorkbook(file);
+      files[file.name] = { sheets, config: null };
+      idbSaveFile(file.name, buffer, null);
+      ok++;
+    } catch (err) {
+      failed.push(file.name + ' (' + err.message + ')');
+    }
+  }
+  uploadStatus.textContent = `Loaded ${ok} file(s).` + (failed.length ? ` Failed: ${failed.join(', ')}` : '');
+  fileInput.value = '';
+  renderFileList();
+}
+
+function renderFileList() {
+  const names = Object.keys(files);
+  if (!names.length) {
+    fileListEl.innerHTML = '<p class="muted">No price lists yet. Upload one above to get started.</p>';
+    return;
+  }
+  fileListEl.innerHTML = '';
+  names.forEach(name => fileListEl.appendChild(renderFileItem(name)));
+}
+
+function renderFileItem(filename) {
+  const entry = files[filename];
+  const cfg = entry.config;
+  const configured = !!(cfg && cfg.sheet && cfg.part_col !== null && cfg.part_col !== undefined);
+  const brand = (cfg && cfg.brand) || guessBrand(filename);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'file-item';
+  wrap.innerHTML = `
+    <div class="file-item-head">
+      <span class="file-name">${escapeHtml(brand)}</span>
+      <span class="muted">(${escapeHtml(filename)})</span>
+      <span class="badge ${configured ? 'ok' : 'warn'}">${configured ? 'Ready to search' : 'Needs setup'}</span>
+      <button class="secondary configure-btn" style="margin-left:auto">${configured ? 'Edit setup' : 'Set up'}</button>
+      <button class="danger remove-btn">Remove</button>
+    </div>
+    <div class="file-configure hidden"></div>
+  `;
+  wrap.querySelector('.configure-btn').addEventListener('click', () => toggleConfigure(wrap, filename));
+  wrap.querySelector('.remove-btn').addEventListener('click', () => { delete files[filename]; idbDeleteFile(filename); renderFileList(); });
+  return wrap;
+}
+
+function toggleConfigure(wrap, filename) {
+  const box = wrap.querySelector('.file-configure');
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const entry = files[filename];
+  const sheetNames = Object.keys(entry.sheets);
+  const sheetOpts = sheetNames.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  box.innerHTML = `
+    <div class="mapping-grid">
+      <div class="field">
+        Brand / label (shown in search results)
+        <input type="text" class="brand-input" value="${escapeHtml((entry.config && entry.config.brand) || guessBrand(filename))}" />
+      </div>
+      <div class="field">
+        Sheet to search
+        <select class="sheet-select">${sheetOpts}</select>
+      </div>
+      <div class="field">
+        Header row (row containing column titles)
+        <input type="text" class="header-row-input" style="width:100px" />
+      </div>
+      <div class="field">
+        Part Number column
+        <select class="part-col-select"></select>
+      </div>
+      <div class="field">
+        Price column
+        <select class="price-col-select"></select>
+      </div>
+      <div class="field">
+        Description column (optional)
+        <select class="desc-col-select"></select>
+      </div>
+    </div>
+    <div class="preview-table"><table class="preview-table-el"></table></div>
+    <div class="row" style="margin-top:12px">
+      <button class="save-config-btn">Save setup</button>
+      <span class="muted config-status"></span>
+    </div>
+  `;
+  const sheetSelect = box.querySelector('.sheet-select');
+  const defaultSheet = (entry.config && sheetNames.includes(entry.config.sheet)) ? entry.config.sheet : sheetNames[0];
+  sheetSelect.value = defaultSheet;
+  sheetSelect.addEventListener('change', () => loadSheetPreview(box, filename, sheetSelect.value));
+  box.querySelector('.save-config-btn').addEventListener('click', () => saveConfig(box, filename));
+  loadSheetPreview(box, filename, defaultSheet);
+}
+
+function loadSheetPreview(box, filename, sheetName) {
+  const entry = files[filename];
+  const rows = entry.sheets[sheetName] || [];
+  const existing = (entry.config && entry.config.sheet === sheetName) ? entry.config : null;
+
+  const headerRowIdx = existing ? existing.header_row : guessHeaderRow(rows);
+  const headerRow = rows[headerRowIdx] || [];
+  const guess = existing ? existing : { header_row: headerRowIdx, ...guessColumns(headerRow) };
+
+  const colCount = Math.max(0, ...rows.map(r => r.length));
+  const columns = [];
+  for (let i = 0; i < colCount; i++) {
+    const label = cellStr(headerRow[i]) || `Column ${i + 1}`;
+    columns.push({ index: i, label });
+  }
+  const opts = columns.map(c => `<option value="${c.index}">${escapeHtml(c.label)} (col ${c.index + 1})</option>`).join('');
+
+  const partSel = box.querySelector('.part-col-select');
+  const priceSel = box.querySelector('.price-col-select');
+  const descSel = box.querySelector('.desc-col-select');
+  partSel.innerHTML = opts;
+  priceSel.innerHTML = '<option value="">— none —</option>' + opts;
+  descSel.innerHTML = '<option value="">— none —</option>' + opts;
+
+  box.querySelector('.header-row-input').value = headerRowIdx + 1;
+  if (guess.part_col !== null && guess.part_col !== undefined) partSel.value = guess.part_col;
+  priceSel.value = (guess.price_col ?? '');
+  descSel.value = (guess.desc_col ?? '');
+
+  renderPreviewTable(box.querySelector('.preview-table-el'), rows.slice(headerRowIdx, headerRowIdx + 8));
+  box.querySelector('.config-status').textContent = existing ? 'Using saved setup for this sheet.' : 'Auto-detected — please confirm.';
+}
+
+function renderPreviewTable(el, rows) {
+  if (!rows || !rows.length) { el.innerHTML = '<tr><td>No rows</td></tr>'; return; }
+  const colCount = Math.max(...rows.map(r => r.length));
+  let html = '<thead><tr>' + Array.from({length: colCount}, (_, i) => `<th>Col ${i+1}</th>`).join('') + '</tr></thead><tbody>';
+  rows.forEach(row => {
+    html += '<tr>' + Array.from({length: colCount}, (_, j) => `<td>${escapeHtml(row[j] ?? '')}</td>`).join('') + '</tr>';
+  });
+  html += '</tbody>';
+  el.innerHTML = html;
+}
+
+function saveConfig(box, filename) {
+  const statusEl = box.querySelector('.config-status');
+  const headerRow = Math.max(1, parseInt(box.querySelector('.header-row-input').value || '1', 10)) - 1;
+  const partColVal = box.querySelector('.part-col-select').value;
+  const priceColVal = box.querySelector('.price-col-select').value;
+  const descColVal = box.querySelector('.desc-col-select').value;
+  if (partColVal === '') {
+    statusEl.textContent = 'Please choose a Part Number column.';
+    return;
+  }
+  files[filename].config = {
+    brand: box.querySelector('.brand-input').value.trim() || guessBrand(filename),
+    sheet: box.querySelector('.sheet-select').value,
+    header_row: headerRow,
+    part_col: parseInt(partColVal, 10),
+    price_col: priceColVal === '' ? null : parseInt(priceColVal, 10),
+    desc_col: descColVal === '' ? null : parseInt(descColVal, 10),
+  };
+  idbSaveConfig(filename, files[filename].config);
+  statusEl.textContent = 'Saved.';
+  renderFileList();
+}
+
+// ---------------- Upload wiring ----------------
+
+dropzone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+['dragenter', 'dragover'].forEach(evt => dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(evt => dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', (e) => { if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+
+// ---------------- Search ----------------
+
+let lastResults = [];
+let matchRegistry = [];
+
+function parseQueries(text) {
+  return text.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+}
+
+function runSearch() {
+  const queries = parseQueries(queryInput.value);
+  if (!queries.length) {
+    searchStatus.textContent = 'Enter at least one part number.';
+    return;
+  }
+  const configured = Object.entries(files).filter(([, e]) => e.config && e.config.part_col !== null && e.config.part_col !== undefined);
+  const results = queries.map(q => searchOne(q, configured));
+  lastResults = results;
+  const foundCount = results.filter(r => r.exact_matches.length > 0).length;
+  searchStatus.textContent = `Searched ${configured.length} price list(s) — found ${foundCount} of ${results.length} part number(s).`;
+  renderResults(results);
+  copyAllBtn.classList.toggle('hidden', !results.length);
+}
+
+function searchOne(query, configuredFiles) {
+  const needle = query.trim().toLowerCase();
+  const exact = [];
+  const partial = [];
+  configuredFiles.forEach(([filename, entry]) => {
+    const cfg = entry.config;
+    const rows = entry.sheets[cfg.sheet] || [];
+    const headerRow = rows[cfg.header_row] || [];
+    const dataRows = rows.slice(cfg.header_row + 1);
+    dataRows.forEach(row => {
+      const cellVal = row[cfg.part_col];
+      const cellText = cellStr(cellVal);
+      if (!cellText) return;
+      const hay = cellText.trim().toLowerCase();
+      if (hay === needle) {
+        exact.push(buildMatch(filename, cfg, headerRow, row));
+      } else if (needle && hay.includes(needle)) {
+        partial.push(buildMatch(filename, cfg, headerRow, row));
+      }
+    });
+  });
+  return {
+    query,
+    exact_matches: exact,
+    partial_matches: partial.slice(0, 10),
+    partial_truncated: partial.length > 10,
+  };
+}
+
+function buildMatch(filename, cfg, headerRow, row) {
+  function get(idx) { return (idx === null || idx === undefined || idx >= row.length) ? null : row[idx]; }
+  const details = row.map((val, i) => {
+    const label = cellStr(headerRow[i]) || `Column ${i + 1}`;
+    const text = cellStr(val);
+    return text ? { label, value: text } : null;
+  }).filter(Boolean);
+  return {
+    brand: cfg.brand || guessBrand(filename),
+    file: filename,
+    sheet: cfg.sheet,
+    part_number: cellStr(get(cfg.part_col)),
+    description: cfg.desc_col !== null && cfg.desc_col !== undefined ? cellStr(get(cfg.desc_col)) : '',
+    price: get(cfg.price_col),
+    details,
+  };
+}
+
+function renderResults(results) {
+  matchRegistry = [];
+  resultsArea.innerHTML = results.map(r => renderResultBlock(r)).join('');
+}
+
+function renderResultBlock(r) {
+  let html = `<div class="result-block"><div class="result-query-title">${escapeHtml(r.query)}</div>`;
+  if (r.exact_matches.length) {
+    html += r.exact_matches.map(m => renderMatchCard(m, 'hit')).join('');
+    if (r.exact_matches.length > 1) {
+      html += `<p class="muted">${r.exact_matches.length} exact matches found (across different price lists or duplicate rows).</p>`;
+    }
+  } else {
+    html += `<div class="result-card miss">No exact match found for "${escapeHtml(r.query)}" in any configured price list.</div>`;
+    if (r.partial_matches.length) {
+      html += '<p class="muted" style="margin-top:8px">Closest partial matches:</p>';
+      html += r.partial_matches.map(m => renderMatchCard(m, 'partial')).join('');
+      if (r.partial_truncated) html += '<p class="muted">Showing first 10 partial matches.</p>';
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderMatchCard(m, kind) {
+  const priceText = (m.price === null || m.price === undefined || m.price === '') ? '—' : escapeHtml(m.price);
+  const detailItems = m.details
+    .filter(d => d.label.toLowerCase() !== 'part number' && d.value !== m.part_number)
+    .slice(0, 8)
+    .map(d => `<div class="k">${escapeHtml(d.label)}</div><div>${escapeHtml(d.value)}</div>`)
+    .join('');
+  const idx = matchRegistry.length;
+  matchRegistry.push(m);
+  return `
+    <div class="result-card ${kind === 'hit' ? 'hit' : ''}" style="${kind === 'partial' ? 'background:#fff;border:1px solid var(--border);' : ''}">
+      <div class="result-top">
+        <span class="brand-badge">${escapeHtml(m.brand)}</span>
+        <span class="part-title">${escapeHtml(m.part_number)}</span>
+        <span class="price" style="margin-left:auto">${priceText}</span>
+        <button class="copy-btn" data-idx="${idx}">Copy</button>
+      </div>
+      ${m.description ? `<div class="desc">${escapeHtml(m.description)}</div>` : ''}
+      <div class="detail-grid">${detailItems}</div>
+    </div>
+  `;
+}
+
+function matchToLine(m) {
+  const priceText = (m.price === null || m.price === undefined || m.price === '') ? '—' : m.price;
+  const parts = [m.part_number];
+  if (m.description) parts.push(m.description);
+  parts.push(priceText);
+  return parts.join(' - ');
+}
+
+function markCopied(btn) {
+  if (!btn) return;
+  const original = btn.textContent;
+  btn.textContent = 'Copied!';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1200);
+}
+
+function showManualCopyBox(text) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;padding:18px 20px;max-width:480px;width:90%;box-shadow:0 10px 30px rgba(0,0,0,0.2);">
+      <p style="margin:0 0 10px;font-size:13px;color:#374151;">Couldn't copy automatically — select the text below and press Cmd+C / Ctrl+C.</p>
+      <textarea readonly style="width:100%;min-height:80px;font-family:inherit;font-size:13px;padding:8px;border-radius:6px;border:1px solid #dde1e6;"></textarea>
+      <div style="text-align:right;margin-top:10px;">
+        <button class="secondary" style="border:1px solid #2563eb;background:transparent;color:#2563eb;padding:6px 14px;border-radius:6px;cursor:pointer;">Close</button>
+      </div>
+    </div>
+  `;
+  const ta = overlay.querySelector('textarea');
+  ta.value = text;
+  overlay.querySelector('button').addEventListener('click', () => overlay.remove());
+  document.body.appendChild(overlay);
+  ta.focus();
+  ta.select();
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    markCopied(btn);
+    return;
+  } catch (e) { /* fall through */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) { markCopied(btn); return; }
+  } catch (e) { /* fall through */ }
+  showManualCopyBox(text);
+}
+
+resultsArea.addEventListener('click', (e) => {
+  const btn = e.target.closest('.copy-btn');
+  if (!btn) return;
+  const m = matchRegistry[parseInt(btn.dataset.idx, 10)];
+  if (!m) return;
+  copyText(matchToLine(m), btn);
+});
+
+copyAllBtn.addEventListener('click', () => {
+  const lines = [];
+  lastResults.forEach(r => {
+    if (r.exact_matches.length) {
+      r.exact_matches.forEach(m => lines.push(matchToLine(m)));
+    } else {
+      lines.push(`${r.query} - Not found`);
+    }
+  });
+  copyText(lines.join('\n'), copyAllBtn);
+});
+
+document.getElementById('searchBtn').addEventListener('click', runSearch);
+queryInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runSearch(); });
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+  queryInput.value = '';
+  resultsArea.innerHTML = '';
+  searchStatus.textContent = '';
+  lastResults = [];
+  matchRegistry = [];
+  copyAllBtn.classList.add('hidden');
+  queryInput.focus();
+});
+
+restoreSavedFiles();
+</script>
+</body>
+</html>

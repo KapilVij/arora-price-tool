@@ -55,6 +55,27 @@
   header h1 { margin: 0; font-size: 21px; }
   header p { margin: 4px 0 0; color: #9ca3af; font-size: 13px; }
   header .privacy { color: #86efac; font-size: 12px; margin-top: 6px; }
+  .tab-bar { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid #2a3547; }
+  .tab-btn {
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 8px 8px 0 0;
+    border-bottom: 2px solid transparent;
+  }
+  .tab-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .tab-btn.active { color: #fff; border-bottom: 2px solid var(--accent); background: rgba(37,99,235,0.15); }
+  .tab-panel.hidden { display: none !important; }
+  .discount-item { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .discount-item .brand-name { font-weight: 600; min-width: 100px; }
+  .discount-item input[type=number] { width: 90px; padding: 7px 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; }
+  .ambiguous-row { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+  .ambiguous-row .part-title { font-weight: 600; margin-bottom: 6px; }
+  .ambiguous-row label { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 4px 0; cursor: pointer; }
   main {
     max-width: 900px;
     margin: 24px auto;
@@ -196,17 +217,25 @@
     .result-top .copy-btn { order: 4; }
     .detail-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
     .dropzone { padding: 18px 14px; font-size: 12.5px; }
+    .tab-btn { padding: 9px 12px; font-size: 13px; }
+    .discount-item { gap: 8px; }
+    .discount-item .brand-name { min-width: 0; flex-basis: 100%; }
   }
 </style>
 </head>
 <body>
 <header>
   <h1>Arora Price Tool</h1>
-  <p>Upload Excel price lists and search part numbers to find their price.</p>
+  <p id="headerSubtitle">Upload Excel price lists and search part numbers to find their price.</p>
   <p class="privacy">🔒 Everything happens in your browser — your files are never uploaded to any server.</p>
+  <div class="tab-bar" role="tablist">
+    <button class="tab-btn active" id="tabBtnPricing" role="tab" aria-selected="true">Pricing Tool</button>
+    <button class="tab-btn" id="tabBtnEstimate" role="tab" aria-selected="false">Estimate Tool</button>
+  </div>
 </header>
 
 <main>
+  <div id="panelPricing" class="tab-panel">
   <div class="card">
     <h2>1. Price lists</h2>
     <div id="dropzone" class="dropzone">
@@ -231,6 +260,35 @@
       <span class="muted" id="searchStatus"></span>
     </div>
     <div id="resultsArea" style="margin-top:14px"></div>
+  </div>
+  </div>
+
+  <div id="panelEstimate" class="tab-panel hidden">
+  <div class="card">
+    <h2>1. Brand discounts</h2>
+    <p class="muted" id="estimateDiscountsHint">Set up and configure your price lists in the Pricing Tool tab first — they're shared here automatically.</p>
+    <div class="file-list" id="discountList" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Upload order file</h2>
+    <div id="orderDropzone" class="dropzone">
+      Click to choose a CSV or Excel file with part numbers &amp; quantities, or drag &amp; drop it here
+    </div>
+    <input type="file" id="orderFileInput" accept=".xlsx,.xlsm,.xls,.csv" class="hidden" />
+    <div class="status" id="orderUploadStatus"></div>
+    <div id="orderConfigureArea" style="margin-top:14px"></div>
+  </div>
+
+  <div class="card hidden" id="estimateResultsCard">
+    <h2>3. Estimate</h2>
+    <div class="row">
+      <button id="generateEstimateBtn">Generate estimate</button>
+      <button class="secondary hidden" id="downloadEstimateBtn">Download as Excel</button>
+      <span class="muted" id="estimateStatus"></span>
+    </div>
+    <div id="estimateResultsArea" style="margin-top:14px"></div>
+  </div>
   </div>
 </main>
 
@@ -350,19 +408,52 @@ function readWorkbook(file) {
 
 const IDB_NAME = 'arora-price-tool';
 const IDB_STORE = 'files';
+const IDB_DISCOUNT_STORE = 'discounts';
 
 function openStore() {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) { reject(new Error('IndexedDB unavailable')); return; }
-    const req = indexedDB.open(IDB_NAME, 1);
+    const req = indexedDB.open(IDB_NAME, 2);
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(IDB_STORE)) {
         req.result.createObjectStore(IDB_STORE, { keyPath: 'name' });
+      }
+      if (!req.result.objectStoreNames.contains(IDB_DISCOUNT_STORE)) {
+        req.result.createObjectStore(IDB_DISCOUNT_STORE, { keyPath: 'name' });
       }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+
+async function idbSaveDiscount(filename, discount) {
+  try {
+    const db = await openStore();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_DISCOUNT_STORE, 'readwrite');
+      tx.objectStore(IDB_DISCOUNT_STORE).put({ name: filename, discount });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function idbLoadDiscounts() {
+  try {
+    const db = await openStore();
+    const records = await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_DISCOUNT_STORE, 'readonly');
+      const req = tx.objectStore(IDB_DISCOUNT_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    const map = {};
+    records.forEach(r => { map[r.name] = r.discount; });
+    return map;
+  } catch (e) {
+    return {};
+  }
 }
 
 async function idbSaveFile(name, buffer, config) {
@@ -463,10 +554,11 @@ function renderFileList() {
   const names = Object.keys(files);
   if (!names.length) {
     fileListEl.innerHTML = '<p class="muted">No price lists yet. Upload one above to get started.</p>';
-    return;
+  } else {
+    fileListEl.innerHTML = '';
+    names.forEach(name => fileListEl.appendChild(renderFileItem(name)));
   }
-  fileListEl.innerHTML = '';
-  names.forEach(name => fileListEl.appendChild(renderFileItem(name)));
+  if (typeof renderDiscountList === 'function') renderDiscountList();
 }
 
 function renderFileItem(filename) {
@@ -896,6 +988,430 @@ document.getElementById('clearBtn').addEventListener('click', () => {
 });
 
 restoreSavedFiles();
+
+// =====================================================================
+// Estimate Tool
+// (Independent from the Pricing Tool above — reuses its uploaded price
+// lists via the shared `files` object and `searchOne()` matcher, but
+// does not modify any Pricing Tool code paths.)
+// =====================================================================
+
+const BRAND_DEFAULT_DISCOUNTS = { yamaha: 12, honda: 12, hero: 10, bajaj: 16, tvs: 18 };
+const discounts = {}; // filename -> discount % (number)
+
+function guessDefaultDiscount(brand) {
+  const b = (brand || '').toLowerCase();
+  for (const key of Object.keys(BRAND_DEFAULT_DISCOUNTS)) {
+    if (b.includes(key)) return BRAND_DEFAULT_DISCOUNTS[key];
+  }
+  return 0;
+}
+
+async function loadDiscounts() {
+  const saved = await idbLoadDiscounts();
+  Object.assign(discounts, saved);
+  renderDiscountList();
+}
+
+// ---------------- Tab switching ----------------
+
+const tabBtnPricing = document.getElementById('tabBtnPricing');
+const tabBtnEstimate = document.getElementById('tabBtnEstimate');
+const panelPricing = document.getElementById('panelPricing');
+const panelEstimate = document.getElementById('panelEstimate');
+const headerSubtitle = document.getElementById('headerSubtitle');
+
+function activateTab(name) {
+  const isPricing = name === 'pricing';
+  panelPricing.classList.toggle('hidden', !isPricing);
+  panelEstimate.classList.toggle('hidden', isPricing);
+  tabBtnPricing.classList.toggle('active', isPricing);
+  tabBtnEstimate.classList.toggle('active', !isPricing);
+  tabBtnPricing.setAttribute('aria-selected', String(isPricing));
+  tabBtnEstimate.setAttribute('aria-selected', String(!isPricing));
+  headerSubtitle.textContent = isPricing
+    ? 'Upload Excel price lists and search part numbers to find their price.'
+    : 'Upload an order file and get item names, MRP, rate & amount for every part number.';
+  if (!isPricing) renderDiscountList();
+}
+tabBtnPricing.addEventListener('click', () => activateTab('pricing'));
+tabBtnEstimate.addEventListener('click', () => activateTab('estimate'));
+
+// ---------------- Brand discounts panel ----------------
+
+const discountList = document.getElementById('discountList');
+const estimateDiscountsHint = document.getElementById('estimateDiscountsHint');
+
+function renderDiscountList() {
+  const configuredNames = Object.keys(files).filter(name => {
+    const cfg = files[name].config;
+    return cfg && cfg.part_col !== null && cfg.part_col !== undefined;
+  });
+  estimateDiscountsHint.classList.toggle('hidden', configuredNames.length > 0);
+  discountList.innerHTML = '';
+  configuredNames.forEach(name => {
+    const cfg = files[name].config;
+    const brand = cfg.brand || guessBrand(name);
+    if (!(name in discounts)) discounts[name] = guessDefaultDiscount(brand);
+    const row = document.createElement('div');
+    row.className = 'file-item discount-item';
+    row.innerHTML = `
+      <span class="brand-name">${escapeHtml(brand)}</span>
+      <span class="muted">(${escapeHtml(name)})</span>
+      <span class="muted" style="margin-left:auto">Discount %</span>
+      <input type="number" class="discount-input" min="0" max="100" step="0.01" value="${discounts[name]}" />
+    `;
+    const input = row.querySelector('.discount-input');
+    input.addEventListener('change', () => {
+      const val = parseFloat(input.value);
+      discounts[name] = Number.isFinite(val) ? val : 0;
+      input.value = discounts[name];
+      idbSaveDiscount(name, discounts[name]);
+    });
+    discountList.appendChild(row);
+  });
+}
+
+// ---------------- Order file upload & column setup ----------------
+
+const orderDropzone = document.getElementById('orderDropzone');
+const orderFileInput = document.getElementById('orderFileInput');
+const orderUploadStatus = document.getElementById('orderUploadStatus');
+const orderConfigureArea = document.getElementById('orderConfigureArea');
+const estimateResultsCard = document.getElementById('estimateResultsCard');
+const generateEstimateBtn = document.getElementById('generateEstimateBtn');
+const downloadEstimateBtn = document.getElementById('downloadEstimateBtn');
+const estimateStatus = document.getElementById('estimateStatus');
+const estimateResultsArea = document.getElementById('estimateResultsArea');
+
+const QTY_KEYWORDS = ['qty', 'quantity', 'units', 'no. of', 'nos', 'count'];
+
+let orderFile = null; // { name, sheets }
+let orderConfig = null; // { sheet, header_row, part_col, qty_col }
+let lastEstimateRows = [];
+
+orderDropzone.addEventListener('click', () => orderFileInput.click());
+orderFileInput.addEventListener('change', () => { if (orderFileInput.files[0]) handleOrderFile(orderFileInput.files[0]); });
+['dragenter', 'dragover'].forEach(evt => orderDropzone.addEventListener(evt, (e) => { e.preventDefault(); orderDropzone.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(evt => orderDropzone.addEventListener(evt, (e) => { e.preventDefault(); orderDropzone.classList.remove('drag'); }));
+orderDropzone.addEventListener('drop', (e) => { if (e.dataTransfer.files[0]) handleOrderFile(e.dataTransfer.files[0]); });
+
+async function handleOrderFile(file) {
+  if (!/\.(xlsx|xlsm|xls|csv)$/i.test(file.name)) {
+    orderUploadStatus.textContent = 'Please choose a .xlsx, .xlsm, .xls, or .csv file.';
+    return;
+  }
+  orderUploadStatus.textContent = `Reading ${file.name}…`;
+  try {
+    const { sheets } = await readWorkbook(file);
+    orderFile = { name: file.name, sheets };
+    orderUploadStatus.textContent = `Loaded ${file.name}.`;
+    renderOrderConfigureForm();
+  } catch (err) {
+    orderUploadStatus.textContent = 'Error reading file: ' + err.message;
+  }
+  orderFileInput.value = '';
+}
+
+function guessQtyColumn(headerRow, excludeIdx) {
+  const headers = headerRow.map(c => cellStr(c).toLowerCase());
+  for (let i = 0; i < headers.length; i++) {
+    if (i === excludeIdx) continue;
+    if (QTY_KEYWORDS.some(k => headers[i].includes(k))) return i;
+  }
+  return null;
+}
+
+function renderOrderConfigureForm() {
+  const sheetNames = Object.keys(orderFile.sheets);
+  const sheetOpts = sheetNames.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  orderConfigureArea.innerHTML = `
+    <div class="mapping-grid">
+      <div class="field">
+        Sheet to use
+        <select class="order-sheet-select">${sheetOpts}</select>
+      </div>
+      <div class="field">
+        Header row (row containing column titles)
+        <input type="text" class="order-header-row-input" style="width:100px" />
+      </div>
+      <div class="field">
+        Part Number column
+        <select class="order-part-col-select"></select>
+      </div>
+      <div class="field">
+        Quantity column
+        <select class="order-qty-col-select"></select>
+      </div>
+    </div>
+    <div class="preview-table"><table class="order-preview-table-el"></table></div>
+    <div class="row" style="margin-top:12px">
+      <button class="order-confirm-btn">Confirm columns</button>
+      <span class="muted order-config-status"></span>
+    </div>
+  `;
+  const sheetSelect = orderConfigureArea.querySelector('.order-sheet-select');
+  sheetSelect.addEventListener('change', () => loadOrderSheetPreview(sheetSelect.value));
+  orderConfigureArea.querySelector('.order-confirm-btn').addEventListener('click', confirmOrderColumns);
+  loadOrderSheetPreview(sheetNames[0]);
+}
+
+function loadOrderSheetPreview(sheetName) {
+  const rows = orderFile.sheets[sheetName] || [];
+  const headerRowIdx = guessHeaderRow(rows);
+  const headerRow = rows[headerRowIdx] || [];
+  const partGuess = guessColumns(headerRow).part_col;
+  const qtyGuess = guessQtyColumn(headerRow, partGuess);
+
+  const colCount = Math.max(0, ...rows.map(r => r.length));
+  const opts = [];
+  for (let i = 0; i < colCount; i++) {
+    const label = cellStr(headerRow[i]) || `Column ${i + 1}`;
+    opts.push(`<option value="${i}">${escapeHtml(label)} (col ${i + 1})</option>`);
+  }
+  const partSel = orderConfigureArea.querySelector('.order-part-col-select');
+  const qtySel = orderConfigureArea.querySelector('.order-qty-col-select');
+  partSel.innerHTML = opts.join('');
+  qtySel.innerHTML = opts.join('');
+  orderConfigureArea.querySelector('.order-header-row-input').value = headerRowIdx + 1;
+  if (partGuess !== null && partGuess !== undefined) partSel.value = partGuess;
+  if (qtyGuess !== null && qtyGuess !== undefined) qtySel.value = qtyGuess;
+
+  renderPreviewTable(orderConfigureArea.querySelector('.order-preview-table-el'), rows.slice(headerRowIdx, headerRowIdx + 8));
+  orderConfigureArea.querySelector('.order-config-status').textContent = 'Auto-detected — please confirm.';
+}
+
+function confirmOrderColumns() {
+  const statusEl = orderConfigureArea.querySelector('.order-config-status');
+  const partColVal = orderConfigureArea.querySelector('.order-part-col-select').value;
+  const qtyColVal = orderConfigureArea.querySelector('.order-qty-col-select').value;
+  if (partColVal === '' || qtyColVal === '') {
+    statusEl.textContent = 'Please choose both a Part Number column and a Quantity column.';
+    return;
+  }
+  orderConfig = {
+    sheet: orderConfigureArea.querySelector('.order-sheet-select').value,
+    header_row: Math.max(1, parseInt(orderConfigureArea.querySelector('.order-header-row-input').value || '1', 10)) - 1,
+    part_col: parseInt(partColVal, 10),
+    qty_col: parseInt(qtyColVal, 10),
+  };
+  statusEl.textContent = 'Saved. Ready to generate estimate.';
+  estimateResultsCard.classList.remove('hidden');
+}
+
+// ---------------- Estimate generation ----------------
+
+generateEstimateBtn.addEventListener('click', () => {
+  if (!orderFile || !orderConfig) {
+    estimateStatus.textContent = 'Upload and confirm an order file first.';
+    return;
+  }
+  const configured = Object.entries(files).filter(([, e]) => e.config && e.config.part_col !== null && e.config.part_col !== undefined);
+  if (!configured.length) {
+    estimateStatus.textContent = 'No price lists are set up yet — set them up in the Pricing Tool tab first.';
+    return;
+  }
+
+  const rows = orderFile.sheets[orderConfig.sheet] || [];
+  const dataRows = rows.slice(orderConfig.header_row + 1);
+
+  const finalRows = [];
+  const ambiguousItems = []; // { placeholderIdx, partNumber, qty, candidates }
+
+  dataRows.forEach(row => {
+    const partNumber = cellStr(row[orderConfig.part_col]);
+    if (!partNumber) return;
+    const qtyRaw = cellStr(row[orderConfig.qty_col]);
+    const qty = parseFloat(qtyRaw) || 0;
+
+    const result = searchOne(partNumber, configured);
+    const matches = result.exact_matches;
+
+    if (matches.length === 0) {
+      finalRows.push(computeEstimateRow(partNumber, qty, null));
+    } else if (matches.length === 1) {
+      finalRows.push(computeEstimateRow(partNumber, qty, matches[0]));
+    } else {
+      const placeholderIdx = finalRows.length;
+      finalRows.push(null); // placeholder, filled in after disambiguation
+      ambiguousItems.push({ placeholderIdx, partNumber, qty, candidates: matches });
+    }
+  });
+
+  if (ambiguousItems.length) {
+    showAmbiguousModal(ambiguousItems, finalRows);
+  } else {
+    finalizeEstimate(finalRows);
+  }
+});
+
+function computeEstimateRow(partNumber, qty, match) {
+  if (!match) {
+    return { partNumber, qty, itemName: '', brand: '', mrp: null, discountPct: null, rate: null, amount: null, notFound: true };
+  }
+  const mrp = (typeof match.price === 'number') ? match.price : (parseFloat(match.price) || null);
+  const discountPct = (match.file in discounts) ? discounts[match.file] : guessDefaultDiscount(match.brand);
+  const rate = (mrp !== null) ? mrp - (mrp * discountPct / 100) : null;
+  const amount = (rate !== null) ? rate * qty : null;
+  return { partNumber, qty, itemName: match.description || '', brand: match.brand, mrp, discountPct, rate, amount, notFound: false };
+}
+
+function showAmbiguousModal(ambiguousItems, finalRows) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px;';
+  const itemsHtml = ambiguousItems.map((item, idx) => {
+    const brandNames = item.candidates.map(c => c.brand).join(' and ');
+    const optionsHtml = item.candidates.map((c, cIdx) => `
+      <label>
+        <input type="radio" name="amb-${idx}" value="${cIdx}" ${cIdx === 0 ? 'checked' : ''} />
+        ${escapeHtml(c.brand)} — ${escapeHtml(c.description || 'no description')} — MRP ${escapeHtml(c.price ?? '—')}
+      </label>
+    `).join('');
+    return `
+      <div class="ambiguous-row">
+        <div class="part-title">${escapeHtml(item.partNumber)} matched in multiple brands — ${escapeHtml(brandNames)}. Please select which one to use:</div>
+        ${optionsHtml}
+      </div>
+    `;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;padding:20px 22px;max-width:560px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 10px 30px rgba(0,0,0,0.2);">
+      <p style="margin:0 0 14px;font-size:15px;font-weight:700;color:#1c1f24;">Some part numbers matched more than one brand</p>
+      ${itemsHtml}
+      <div style="text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+        <button class="amb-cancel-btn" style="border:1px solid #dde1e6;background:transparent;color:#6b7280;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:14px;">Cancel</button>
+        <button class="amb-confirm-btn" style="border:none;background:#2563eb;color:#fff;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:14px;">Continue</button>
+      </div>
+    </div>
+  `;
+
+  overlay.querySelector('.amb-cancel-btn').addEventListener('click', () => {
+    overlay.remove();
+    estimateStatus.textContent = 'Estimate cancelled — resolve the ambiguous part numbers to continue.';
+  });
+  overlay.querySelector('.amb-confirm-btn').addEventListener('click', () => {
+    ambiguousItems.forEach((item, idx) => {
+      const checked = overlay.querySelector(`input[name="amb-${idx}"]:checked`);
+      const cIdx = checked ? parseInt(checked.value, 10) : 0;
+      finalRows[item.placeholderIdx] = computeEstimateRow(item.partNumber, item.qty, item.candidates[cIdx]);
+    });
+    overlay.remove();
+    finalizeEstimate(finalRows);
+  });
+
+  document.body.appendChild(overlay);
+}
+
+function finalizeEstimate(rows) {
+  lastEstimateRows = rows;
+  const foundCount = rows.filter(r => !r.notFound).length;
+  estimateStatus.textContent = `Generated estimate — found ${foundCount} of ${rows.length} part number(s).`;
+  renderEstimateTable(rows);
+  downloadEstimateBtn.classList.toggle('hidden', !rows.length);
+}
+
+function fmtNum(n) {
+  return (n === null || n === undefined) ? '—' : (Math.round(n * 100) / 100).toLocaleString('en-IN');
+}
+
+function renderEstimateTable(rows) {
+  if (!rows.length) {
+    estimateResultsArea.innerHTML = '<p class="muted">No rows found in the order file.</p>';
+    return;
+  }
+  let total = 0;
+  const bodyRows = rows.map(r => {
+    if (r.amount !== null) total += r.amount;
+    const rowStyle = r.notFound ? 'background:var(--bad-bg);' : '';
+    return `
+      <tr style="${rowStyle}">
+        <td>${escapeHtml(r.partNumber)}</td>
+        <td>${escapeHtml(r.qty)}</td>
+        <td>${escapeHtml(r.itemName || (r.notFound ? 'Not found' : ''))}</td>
+        <td>${escapeHtml(r.brand || '')}</td>
+        <td>${fmtNum(r.mrp)}</td>
+        <td>${r.discountPct === null || r.discountPct === undefined ? '—' : r.discountPct + '%'}</td>
+        <td>${fmtNum(r.rate)}</td>
+        <td>${fmtNum(r.amount)}</td>
+      </tr>
+    `;
+  }).join('');
+  estimateResultsArea.innerHTML = `
+    <div class="preview-table">
+      <table>
+        <thead><tr><th>Part Number</th><th>Qty</th><th>Item Name</th><th>Brand</th><th>MRP</th><th>Discount %</th><th>Rate</th><th>Amount</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+        <tfoot><tr><td colspan="7" style="text-align:right;font-weight:700;">Total</td><td style="font-weight:700;">${fmtNum(total)}</td></tr></tfoot>
+      </table>
+    </div>
+  `;
+}
+
+// ---------------- Download estimate as Excel ----------------
+
+const DEFAULT_ESTIMATE_DOWNLOAD_NAME = 'Arora_Automobiles_Estimate';
+
+function showEstimateDownloadDialog(rows) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;padding:20px 22px;max-width:420px;width:90%;box-shadow:0 10px 30px rgba(0,0,0,0.2);">
+      <p style="margin:0 0 10px;font-size:14px;font-weight:600;color:#1c1f24;">Name this Excel file</p>
+      <p style="margin:0 0 10px;font-size:12.5px;color:#6b7280;">Leave blank to use the default name.</p>
+      <input type="text" class="dl-name-input" placeholder="${DEFAULT_ESTIMATE_DOWNLOAD_NAME}" style="width:100%;padding:9px 10px;border-radius:6px;border:1px solid #dde1e6;font-size:14px;font-family:inherit;" />
+      <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+        <button class="dl-cancel-btn" style="border:1px solid #dde1e6;background:transparent;color:#6b7280;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:14px;">Cancel</button>
+        <button class="dl-confirm-btn" style="border:none;background:#2563eb;color:#fff;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:14px;">Download</button>
+      </div>
+    </div>
+  `;
+  const input = overlay.querySelector('.dl-name-input');
+  const confirm = () => {
+    let filename = (input.value || '').trim() || DEFAULT_ESTIMATE_DOWNLOAD_NAME;
+    filename = filename.replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]+/g, '_').trim() || DEFAULT_ESTIMATE_DOWNLOAD_NAME;
+    overlay.remove();
+    writeEstimateWorkbook(rows, filename);
+  };
+  overlay.querySelector('.dl-confirm-btn').addEventListener('click', confirm);
+  overlay.querySelector('.dl-cancel-btn').addEventListener('click', () => overlay.remove());
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirm(); if (e.key === 'Escape') overlay.remove(); });
+  document.body.appendChild(overlay);
+  input.focus();
+}
+
+function writeEstimateWorkbook(rows, filename) {
+  let total = 0;
+  const sheetData = [
+    ['Part Number', 'Quantity', 'Item Name', 'Brand', 'MRP', 'Discount %', 'Rate', 'Amount'],
+    ...rows.map(r => {
+      if (r.amount !== null) total += r.amount;
+      return [
+        r.partNumber,
+        r.qty,
+        r.itemName || (r.notFound ? 'Not found' : ''),
+        r.brand || '',
+        r.mrp === null ? '' : r.mrp,
+        r.discountPct === null || r.discountPct === undefined ? '' : r.discountPct,
+        r.rate === null ? '' : Math.round(r.rate * 100) / 100,
+        r.amount === null ? '' : Math.round(r.amount * 100) / 100,
+      ];
+    }),
+    ['', '', '', '', '', '', 'Total', Math.round(total * 100) / 100],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(sheetData);
+  ws['!cols'] = [{ wch: 20 }, { wch: 10 }, { wch: 34 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Estimate');
+  XLSX.writeFile(wb, `${filename}.xlsx`);
+}
+
+downloadEstimateBtn.addEventListener('click', () => {
+  if (!lastEstimateRows.length) return;
+  showEstimateDownloadDialog(lastEstimateRows);
+});
+
+loadDiscounts();
 </script>
 </body>
 </html>

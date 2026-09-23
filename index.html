@@ -280,7 +280,10 @@
       Click to choose a CSV or Excel file with part numbers &amp; quantities, or drag &amp; drop it here
     </div>
     <input type="file" id="orderFileInput" accept=".xlsx,.xlsm,.xls,.csv" class="hidden" />
-    <div class="status" id="orderUploadStatus"></div>
+    <div class="row" style="margin-top:10px">
+      <div class="status" id="orderUploadStatus" style="margin-top:0"></div>
+      <button class="danger hidden" id="clearOrderBtn" style="margin-left:auto">Clear &amp; upload new</button>
+    </div>
     <div id="orderConfigureArea" style="margin-top:14px"></div>
   </div>
 
@@ -1111,11 +1114,27 @@ async function handleOrderFile(file) {
     orderFile = { name: file.name, sheets };
     orderUploadStatus.textContent = `Loaded ${file.name}.`;
     renderOrderConfigureForm();
+    clearOrderBtn.classList.remove('hidden');
   } catch (err) {
     orderUploadStatus.textContent = 'Error reading file: ' + err.message;
   }
   orderFileInput.value = '';
 }
+
+const clearOrderBtn = document.getElementById('clearOrderBtn');
+clearOrderBtn.addEventListener('click', () => {
+  orderFile = null;
+  orderConfig = null;
+  lastEstimateRows = [];
+  orderFileInput.value = '';
+  orderUploadStatus.textContent = '';
+  orderConfigureArea.innerHTML = '';
+  estimateResultsCard.classList.add('hidden');
+  estimateResultsArea.innerHTML = '';
+  estimateStatus.textContent = '';
+  downloadEstimateBtn.classList.add('hidden');
+  clearOrderBtn.classList.add('hidden');
+});
 
 function guessQtyColumn(headerRow, excludeIdx) {
   const headers = headerRow.map(c => cellStr(c).toLowerCase());

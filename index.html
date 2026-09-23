@@ -24,6 +24,7 @@
 <meta name="twitter:image" content="https://arorapricetool.vercel.app/og-image.png" />
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <style>
   :root {
     --bg: #f5f6f8;
@@ -76,6 +77,8 @@
   .ambiguous-row { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
   .ambiguous-row .part-title { font-weight: 600; margin-bottom: 6px; }
   .ambiguous-row label { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 4px 0; cursor: pointer; }
+  .estimate-header-row th { background: #fde047; color: #1c1f24; }
+  .estimate-total-row td { background: var(--good-bg); color: var(--good); font-weight: 700; }
   main {
     max-width: 900px;
     margin: 24px auto;
@@ -1326,12 +1329,10 @@ function renderEstimateTable(rows) {
     const rowStyle = r.notFound ? 'background:var(--bad-bg);' : '';
     return `
       <tr style="${rowStyle}">
-        <td>${escapeHtml(r.partNumber)}</td>
         <td>${escapeHtml(r.qty)}</td>
+        <td>${escapeHtml(r.partNumber)}</td>
         <td>${escapeHtml(r.itemName || (r.notFound ? 'Not found' : ''))}</td>
-        <td>${escapeHtml(r.brand || '')}</td>
         <td>${fmtNum(r.mrp)}</td>
-        <td>${r.discountPct === null || r.discountPct === undefined ? '—' : r.discountPct + '%'}</td>
         <td>${fmtNum(r.rate)}</td>
         <td>${fmtNum(r.amount)}</td>
       </tr>
@@ -1340,9 +1341,9 @@ function renderEstimateTable(rows) {
   estimateResultsArea.innerHTML = `
     <div class="preview-table">
       <table>
-        <thead><tr><th>Part Number</th><th>Qty</th><th>Item Name</th><th>Brand</th><th>MRP</th><th>Discount %</th><th>Rate</th><th>Amount</th></tr></thead>
+        <thead><tr class="estimate-header-row"><th>Quantity</th><th>Part Number</th><th>Item Name</th><th>MRP</th><th>Rate</th><th>Amount</th></tr></thead>
         <tbody>${bodyRows}</tbody>
-        <tfoot><tr><td colspan="7" style="text-align:right;font-weight:700;">Total</td><td style="font-weight:700;">${fmtNum(total)}</td></tr></tfoot>
+        <tfoot><tr class="estimate-total-row"><td></td><td></td><td></td><td>Total</td><td></td><td>${fmtNum(total)}</td></tr></tfoot>
       </table>
     </div>
   `;
@@ -1380,30 +1381,54 @@ function showEstimateDownloadDialog(rows) {
   input.focus();
 }
 
-function writeEstimateWorkbook(rows, filename) {
+function downloadBuffer(buffer, filename) {
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Uses ExcelJS (not SheetJS) because the free SheetJS build silently
+// drops custom cell fill colors when writing .xlsx files — verified by
+// inspecting the output's styles.xml. ExcelJS writes real colors.
+async function writeEstimateWorkbook(rows, filename) {
   let total = 0;
-  const sheetData = [
-    ['Part Number', 'Quantity', 'Item Name', 'Brand', 'MRP', 'Discount %', 'Rate', 'Amount'],
-    ...rows.map(r => {
-      if (r.amount !== null) total += r.amount;
-      return [
-        r.partNumber,
-        r.qty,
-        r.itemName || (r.notFound ? 'Not found' : ''),
-        r.brand || '',
-        r.mrp === null ? '' : r.mrp,
-        r.discountPct === null || r.discountPct === undefined ? '' : r.discountPct,
-        r.rate === null ? '' : Math.round(r.rate * 100) / 100,
-        r.amount === null ? '' : Math.round(r.amount * 100) / 100,
-      ];
-    }),
-    ['', '', '', '', '', '', 'Total', Math.round(total * 100) / 100],
-  ];
-  const ws = XLSX.utils.aoa_to_sheet(sheetData);
-  ws['!cols'] = [{ wch: 20 }, { wch: 10 }, { wch: 34 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Estimate');
-  XLSX.writeFile(wb, `${filename}.xlsx`);
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Estimate');
+
+  const headerRow = ws.addRow(['Quantity', 'Part Number', 'Item Name', 'MRP', 'Rate', 'Amount']);
+  headerRow.eachCell(cell => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDE047' } };
+    cell.font = { bold: true };
+  });
+
+  rows.forEach(r => {
+    if (r.amount !== null) total += r.amount;
+    ws.addRow([
+      r.qty,
+      r.partNumber,
+      r.itemName || (r.notFound ? 'Not found' : ''),
+      r.mrp === null ? '' : r.mrp,
+      r.rate === null ? '' : Math.round(r.rate * 100) / 100,
+      r.amount === null ? '' : Math.round(r.amount * 100) / 100,
+    ]);
+  });
+
+  const totalRow = ws.addRow(['', '', '', 'Total', '', Math.round(total * 100) / 100]);
+  totalRow.eachCell(cell => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF3' } };
+    cell.font = { bold: true, color: { argb: 'FF15803D' } };
+  });
+
+  ws.columns = [{ width: 12 }, { width: 20 }, { width: 34 }, { width: 12 }, { width: 12 }, { width: 12 }];
+
+  const buffer = await wb.xlsx.writeBuffer();
+  downloadBuffer(buffer, `${filename}.xlsx`);
 }
 
 downloadEstimateBtn.addEventListener('click', () => {

@@ -78,7 +78,8 @@
   .ambiguous-row .part-title { font-weight: 600; margin-bottom: 6px; }
   .ambiguous-row label { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 4px 0; cursor: pointer; }
   .estimate-header-row th { background: #fde047; color: #1c1f24; }
-  .estimate-total-row td { background: var(--good-bg); color: var(--good); font-weight: 700; }
+  .estimate-total-row td { background: var(--good-bg); color: #000; font-weight: 700; }
+  .estimate-table td, .estimate-table th { border: 1px solid var(--border); }
   main {
     max-width: 900px;
     margin: 24px auto;
@@ -1340,7 +1341,7 @@ function renderEstimateTable(rows) {
   }).join('');
   estimateResultsArea.innerHTML = `
     <div class="preview-table">
-      <table>
+      <table class="estimate-table">
         <thead><tr class="estimate-header-row"><th>Quantity</th><th>Part Number</th><th>Item Name</th><th>MRP</th><th>Rate</th><th>Amount</th></tr></thead>
         <tbody>${bodyRows}</tbody>
         <tfoot><tr class="estimate-total-row"><td></td><td></td><td></td><td>Total</td><td></td><td>${fmtNum(total)}</td></tr></tfoot>
@@ -1396,6 +1397,11 @@ function downloadBuffer(buffer, filename) {
 // Uses ExcelJS (not SheetJS) because the free SheetJS build silently
 // drops custom cell fill colors when writing .xlsx files — verified by
 // inspecting the output's styles.xml. ExcelJS writes real colors.
+const THIN_BORDER = { style: 'thin', color: { argb: 'FFB0B0B0' } };
+function applyOutlineBorder(cell) {
+  cell.border = { top: THIN_BORDER, left: THIN_BORDER, bottom: THIN_BORDER, right: THIN_BORDER };
+}
+
 async function writeEstimateWorkbook(rows, filename) {
   let total = 0;
   const wb = new ExcelJS.Workbook();
@@ -1405,11 +1411,12 @@ async function writeEstimateWorkbook(rows, filename) {
   headerRow.eachCell(cell => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDE047' } };
     cell.font = { bold: true };
+    applyOutlineBorder(cell);
   });
 
   rows.forEach(r => {
     if (r.amount !== null) total += r.amount;
-    ws.addRow([
+    const row = ws.addRow([
       r.qty,
       r.partNumber,
       r.itemName || (r.notFound ? 'Not found' : ''),
@@ -1417,12 +1424,14 @@ async function writeEstimateWorkbook(rows, filename) {
       r.rate === null ? '' : Math.round(r.rate * 100) / 100,
       r.amount === null ? '' : Math.round(r.amount * 100) / 100,
     ]);
+    row.eachCell({ includeEmpty: true }, applyOutlineBorder);
   });
 
   const totalRow = ws.addRow(['', '', '', 'Total', '', Math.round(total * 100) / 100]);
-  totalRow.eachCell(cell => {
+  totalRow.eachCell({ includeEmpty: true }, cell => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF3' } };
-    cell.font = { bold: true, color: { argb: 'FF15803D' } };
+    cell.font = { bold: true, color: { argb: 'FF000000' } };
+    applyOutlineBorder(cell);
   });
 
   ws.columns = [{ width: 12 }, { width: 20 }, { width: 34 }, { width: 12 }, { width: 12 }, { width: 12 }];

@@ -825,9 +825,15 @@ copyAllBtn.addEventListener('click', () => {
   copyText(lines.join('\n'), copyAllBtn);
 });
 
-downloadBtn.addEventListener('click', () => {
-  const rows = buildResultRows();
-  if (!rows.length) return;
+const DEFAULT_DOWNLOAD_NAME = 'Arora_Automobiles_Price_List';
+
+function sanitizeFilename(typed) {
+  let filename = (typed || '').trim() || DEFAULT_DOWNLOAD_NAME;
+  filename = filename.replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]+/g, '_').trim() || DEFAULT_DOWNLOAD_NAME;
+  return filename;
+}
+
+function writeResultsWorkbook(rows, filename) {
   const sheetData = [
     ['Part Number', 'Item Name', 'Price'],
     ...rows.map(row => [row.partNumber, row.itemName, row.price]),
@@ -836,8 +842,43 @@ downloadBtn.addEventListener('click', () => {
   ws['!cols'] = [{ wch: 22 }, { wch: 38 }, { wch: 14 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Results');
-  const stamp = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, `arora-price-results-${stamp}.xlsx`);
+  XLSX.writeFile(wb, `${filename}.xlsx`);
+}
+
+function showDownloadNameDialog(rows) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;padding:20px 22px;max-width:420px;width:90%;box-shadow:0 10px 30px rgba(0,0,0,0.2);">
+      <p style="margin:0 0 10px;font-size:14px;font-weight:600;color:#1c1f24;">Name this Excel file</p>
+      <p style="margin:0 0 10px;font-size:12.5px;color:#6b7280;">Leave blank to use the default name.</p>
+      <input type="text" class="dl-name-input" placeholder="${DEFAULT_DOWNLOAD_NAME}" style="width:100%;padding:9px 10px;border-radius:6px;border:1px solid #dde1e6;font-size:14px;font-family:inherit;" />
+      <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+        <button class="dl-cancel-btn" style="border:1px solid #dde1e6;background:transparent;color:#6b7280;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:14px;">Cancel</button>
+        <button class="dl-confirm-btn" style="border:none;background:#2563eb;color:#fff;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:14px;">Download</button>
+      </div>
+    </div>
+  `;
+  const input = overlay.querySelector('.dl-name-input');
+  const confirm = () => {
+    const filename = sanitizeFilename(input.value);
+    overlay.remove();
+    writeResultsWorkbook(rows, filename);
+  };
+  overlay.querySelector('.dl-confirm-btn').addEventListener('click', confirm);
+  overlay.querySelector('.dl-cancel-btn').addEventListener('click', () => overlay.remove());
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') confirm();
+    if (e.key === 'Escape') overlay.remove();
+  });
+  document.body.appendChild(overlay);
+  input.focus();
+}
+
+downloadBtn.addEventListener('click', () => {
+  const rows = buildResultRows();
+  if (!rows.length) return;
+  showDownloadNameDialog(rows);
 });
 
 document.getElementById('searchBtn').addEventListener('click', runSearch);

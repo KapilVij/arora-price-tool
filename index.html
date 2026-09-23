@@ -79,7 +79,19 @@
   .ambiguous-row label { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 4px 0; cursor: pointer; }
   .estimate-header-row th { background: #fde047; color: #1c1f24; }
   .estimate-total-row td { background: var(--good-bg); color: #000; font-weight: 700; }
+  .loading-inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .estimate-table td, .estimate-table th { border: 1px solid var(--border); }
+  .estimate-table { min-width: 640px; }
+  .estimate-table td:nth-child(3), .estimate-table th:nth-child(3) { min-width: 160px; }
   main {
     max-width: 900px;
     margin: 24px auto;
@@ -292,6 +304,7 @@
     <div class="row">
       <button id="generateEstimateBtn">Generate estimate</button>
       <button class="secondary hidden" id="downloadEstimateBtn">Download as Excel</button>
+      <span class="loading-inline hidden" id="estimateLoading"><span class="spinner"></span>Estimating…</span>
       <span class="muted" id="estimateStatus"></span>
     </div>
     <div id="estimateResultsArea" style="margin-top:14px"></div>
@@ -1089,6 +1102,7 @@ const estimateResultsCard = document.getElementById('estimateResultsCard');
 const generateEstimateBtn = document.getElementById('generateEstimateBtn');
 const downloadEstimateBtn = document.getElementById('downloadEstimateBtn');
 const estimateStatus = document.getElementById('estimateStatus');
+const estimateLoading = document.getElementById('estimateLoading');
 const estimateResultsArea = document.getElementById('estimateResultsArea');
 
 const QTY_KEYWORDS = ['qty', 'quantity', 'units', 'no. of', 'nos', 'count'];
@@ -1224,7 +1238,12 @@ function confirmOrderColumns() {
 
 // ---------------- Estimate generation ----------------
 
-generateEstimateBtn.addEventListener('click', () => {
+function setEstimateLoading(isLoading) {
+  estimateLoading.classList.toggle('hidden', !isLoading);
+  generateEstimateBtn.disabled = isLoading;
+}
+
+generateEstimateBtn.addEventListener('click', async () => {
   if (!orderFile || !orderConfig) {
     estimateStatus.textContent = 'Upload and confirm an order file first.';
     return;
@@ -1234,6 +1253,14 @@ generateEstimateBtn.addEventListener('click', () => {
     estimateStatus.textContent = 'No price lists are set up yet — set them up in the Pricing Tool tab first.';
     return;
   }
+
+  setEstimateLoading(true);
+  estimateStatus.textContent = '';
+  estimateResultsArea.innerHTML = '';
+  downloadEstimateBtn.classList.add('hidden');
+  // Yield to the browser so the spinner actually paints before the
+  // (synchronous, potentially slow-on-large-files) matching loop runs.
+  await new Promise(resolve => setTimeout(resolve, 30));
 
   const rows = orderFile.sheets[orderConfig.sheet] || [];
   const dataRows = rows.slice(orderConfig.header_row + 1);
@@ -1260,6 +1287,8 @@ generateEstimateBtn.addEventListener('click', () => {
       ambiguousItems.push({ placeholderIdx, partNumber, qty, candidates: matches });
     }
   });
+
+  setEstimateLoading(false);
 
   if (ambiguousItems.length) {
     showAmbiguousModal(ambiguousItems, finalRows);
